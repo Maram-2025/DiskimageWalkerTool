@@ -2,10 +2,10 @@
 """
 DiskImageWalker
 ================
-أداة أمن سيبراني (Digital Forensics) لتحليل صور أقراص FAT32 واسترجاع
-الملفات منها - تعمل بـ Python القياسية فقط (بدون Third-party Libraries).
+A Digital Forensics cybersecurity tool for analyzing FAT32 disk images and recovering
+files from them - works using Python standard libraries only (without third-party libraries).
 
-الاستخدام السريع:
+Quick usage:
     python diskimagewalker.py --help
     python diskimagewalker.py info   disk.img
     python diskimagewalker.py list   disk.img --all
@@ -26,22 +26,22 @@ logger = logging.getLogger("diskimagewalker")
 
 
 # ============================================================
-# استثناءات مخصصة للأداة
+# Custom exceptions for the tool
 # ============================================================
 class DiskImageWalkerError(Exception):
-    """خطأ عام متوقع في الأداة (نعرضه للمستخدم برسالة واضحة بدل Traceback)."""
+    """General expected error in the tool (displayed to the user with a clear message instead of a Traceback)."""
 
 
 class InvalidImageError(DiskImageWalkerError):
-    """صورة القرص غير صالحة أو تالفة أو المعاملات المعطاة غير صحيحة."""
+    """The disk image is invalid or corrupted, or the provided parameters are invalid."""
 
 
 class ConfigError(DiskImageWalkerError):
-    """مشكلة في ملف الإعدادات (--config)."""
+    """A problem with the configuration file (--config)."""
 
 
 # ============================================================
-# الإعدادات (--config)
+# Configuration (--config)
 # ============================================================
 DEFAULT_CONFIG = {
     "partition_start_sector": 2048,
@@ -50,25 +50,25 @@ DEFAULT_CONFIG = {
 
 
 def load_config(config_path):
-    """يحمّل ملف إعدادات JSON اختياري ويدمجه مع القيم الافتراضية."""
+    """Loads an optional JSON configuration file and merges it with the default values."""
     if config_path is None:
         return dict(DEFAULT_CONFIG)
 
     if not os.path.exists(config_path):
-        raise ConfigError(f"ملف الإعدادات غير موجود: {config_path}")
+        raise ConfigError(f"Configuration file does not exist: {config_path}")
 
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             user_cfg = json.load(f)
     except json.JSONDecodeError as e:
-        raise ConfigError(f"ملف الإعدادات تالف (JSON غير صالح): {e}")
+        raise ConfigError(f"Configuration file is corrupted (invalid JSON): {e}")
     except UnicodeDecodeError:
-        raise ConfigError(f"ملف الإعدادات تالف (ترميز غير صالح): {config_path}")
+        raise ConfigError(f"Configuration file is corrupted (invalid encoding): {config_path}")
     except PermissionError:
-        raise ConfigError(f"لا توجد صلاحية كافية لقراءة ملف الإعدادات: {config_path}")
+        raise ConfigError(f"Insufficient permissions to read configuration file: {config_path}")
 
     if not isinstance(user_cfg, dict):
-        raise ConfigError("ملف الإعدادات يجب أن يكون كائن JSON (object) في المستوى الأعلى")
+        raise ConfigError("Configuration file must be a JSON object at the top level")
 
     cfg = dict(DEFAULT_CONFIG)
     cfg.update(user_cfg)
@@ -76,7 +76,7 @@ def load_config(config_path):
 
 
 # ============================================================
-# FAT32: Boot Sector + متابعة سلسلة FAT الكاملة
+# FAT32: Boot Sector + Full FAT Chain Traversal
 # ============================================================
 def read_boot_sector(image_path, partition_start_sector):
     boot_offset = partition_start_sector * 512
@@ -86,14 +86,14 @@ def read_boot_sector(image_path, partition_start_sector):
 
     if len(boot_data) < 512:
         raise InvalidImageError(
-            "الملف أصغر من أن يحتوي Boot Sector صالح عند هذا الموقع - "
-            "تأكد من صحة --partition-start"
+            "The file is too small to contain a valid Boot Sector at this location - "
+            "make sure --partition-start is correct"
         )
 
     if boot_data[510:512] != b"\x55\xAA":
         raise InvalidImageError(
-            "توقيع Boot Sector (55AA) غير موجود عند القطاع "
-            f"{partition_start_sector} - جرّب رقم قطاع آخر عبر --partition-start"
+            "Boot Sector signature (55AA) not found at sector "
+            f"{partition_start_sector} - try another sector number using --partition-start"
         )
 
     params = {
@@ -107,7 +107,7 @@ def read_boot_sector(image_path, partition_start_sector):
     }
 
     if params["bytes_per_sector"] == 0 or params["sectors_per_cluster"] == 0:
-        raise InvalidImageError("قيم Boot Sector غير منطقية - الصورة قد تكون تالفة أو ليست FAT32")
+        raise InvalidImageError("Boot Sector values are invalid - the image may be corrupted or not FAT32")
 
     params["fat_start_sector"] = params["reserved_sectors"]
     params["data_start_sector"] = params["reserved_sectors"] + (
@@ -123,7 +123,7 @@ def read_fat_table(image_path, params):
         f.seek(offset)
         data = f.read(size)
     if len(data) < size:
-        raise InvalidImageError("تعذّرت قراءة جدول FAT كاملاً - الملف قد يكون مقطوعاً")
+        raise InvalidImageError("Failed to read the complete FAT table - the file may be truncated")
     return data
 
 
@@ -136,7 +136,7 @@ def get_next_cluster(fat_data, cluster):
 
 
 def get_cluster_chain(fat_data, start_cluster):
-    """يتابع سلسلة الـ Clusters كاملة حتى نهايتها (EOC)."""
+    """Follows the complete Cluster chain until its end (EOC)."""
     FAT32_EOC_MIN = 0x0FFFFFF8
     chain = []
     cluster = start_cluster
@@ -157,7 +157,7 @@ def cluster_to_sector(cluster, params):
 def read_cluster_chain_data(image_path, params, fat_data, start_cluster):
     chain = get_cluster_chain(fat_data, start_cluster)
     if not chain:
-        raise InvalidImageError(f"سلسلة Clusters غير صالحة بدءاً من الكتلة {start_cluster}")
+        raise InvalidImageError(f"Invalid Cluster chain starting from cluster {start_cluster}")
 
     cluster_size = params["sectors_per_cluster"] * params["bytes_per_sector"]
     all_data = bytearray()
@@ -170,7 +170,7 @@ def read_cluster_chain_data(image_path, params, fat_data, start_cluster):
 
 
 # ============================================================
-# تحليل مدخلات الدليل (Directory Entries) - يدعم LFN والحذف
+# Directory Entries Parsing - supports LFN and deleted files
 # ============================================================
 def parse_directory_entries(dir_data):
     entries = []
@@ -187,7 +187,7 @@ def parse_directory_entries(dir_data):
 
         attributes = entry[11]
 
-        # مدخل اسم طويل (LFN)
+        # Long File Name (LFN) entry
         if attributes == 0x0F:
             seq = entry[0]
             order = seq & 0x1F
@@ -205,13 +205,13 @@ def parse_directory_entries(dir_data):
         ext_part = entry[8:11]
         is_deleted = first_byte == 0xE5
 
-        # 0x05 بديل عن 0xE5 (KANJI escape) - ليس حذفاً فعلياً
+        # 0x05 is an alternative for 0xE5 (KANJI escape) - not an actual deletion
         if first_byte == 0x05:
             name_part = bytes([0xE5]) + name_part[1:]
             is_deleted = False
         elif is_deleted:
-            # الحرف الأول الحقيقي فُقد نهائياً عند الحذف (استُبدل بـ 0xE5) -
-            # نعوّضه برمز "؟" ليكون واضحاً أنه غير قابل للاسترجاع، بدل حذفه بصمت
+            # The actual first character was lost when the file was deleted (replaced with 0xE5) -
+            # replace it with a "?" symbol to make it clear that it cannot be recovered, instead of silently removing it
             name_part = b"?" + name_part[1:]
 
         name_str = name_part.decode("ascii", errors="ignore").strip()
@@ -265,7 +265,7 @@ def hex_dump(image_path, offset=0, length=512):
 
 
 # ============================================================
-# Carving (استخراج بالتواقيع)
+# Carving (signature-based extraction)
 # ============================================================
 CARVE_SIGNATURES = {
     "jpg": {"header": b"\xFF\xD8\xFF\xE0", "footer": b"\xFF\xD9"},
@@ -287,7 +287,7 @@ def carve_files(image_path, output_dir, file_types=None):
     for file_type in types_to_scan:
         file_type = file_type.strip().lower()
         if file_type not in CARVE_SIGNATURES:
-            logger.warning("نوع ملف غير مدعوم للاستخراج: %s - تم تجاهله", file_type)
+            logger.warning("Unsupported file type for carving: %s - ignored", file_type)
             continue
 
         sig = CARVE_SIGNATURES[file_type]
@@ -299,8 +299,8 @@ def carve_files(image_path, output_dir, file_types=None):
             if start_pos == -1:
                 break
 
-            # نحصر البحث عن الـ footer قبل بداية التوقيع التالي (يتجنب قطع الملف
-            # عند وجود thumbnail بنفس التوقيع داخل EXIF) ونأخذ آخر تطابق ضمن هذا المدى
+            # Limit the footer search before the next signature (avoids cutting the file
+            # when a thumbnail with the same signature exists inside EXIF) and take the last match within this range
             next_header = data.find(header, start_pos + len(header))
             search_end = next_header if next_header != -1 else len(data)
 
@@ -323,19 +323,19 @@ def carve_files(image_path, output_dir, file_types=None):
 
 
 # ============================================================
-# أوامر CLI (Subcommands)
+# CLI Commands (Subcommands)
 # ============================================================
 def cmd_info(args, config):
     params = read_boot_sector(args.image, args.partition_start)
-    print("--- معلومات Boot Sector (FAT32) ---")
-    print(f"  البايت لكل قطاع:        {params['bytes_per_sector']}")
-    print(f"  القطاعات لكل كتلة:       {params['sectors_per_cluster']}")
-    print(f"  حجم الكتلة:              {params['bytes_per_sector'] * params['sectors_per_cluster']} بايت")
-    print(f"  القطاعات المحجوزة:       {params['reserved_sectors']}")
-    print(f"  عدد جداول FAT:           {params['num_fats']}")
-    print(f"  القطاعات لكل جدول FAT:   {params['sectors_per_fat']}")
-    print(f"  كتلة بداية الجذر:        {params['root_cluster']}")
-    print(f"  بداية منطقة البيانات:    القطاع {params['data_start_sector']}")
+    print("--- Boot Sector Information (FAT32) ---")
+    print(f"  Bytes per sector:        {params['bytes_per_sector']}")
+    print(f"  Sectors per cluster:       {params['sectors_per_cluster']}")
+    print(f"  Cluster size:              {params['bytes_per_sector'] * params['sectors_per_cluster']} bytes")
+    print(f"  Reserved sectors:          {params['reserved_sectors']}")
+    print(f"  Number of FATs:             {params['num_fats']}")
+    print(f"  Sectors per FAT:             {params['sectors_per_fat']}")
+    print(f"  Root starting cluster:        {params['root_cluster']}")
+    print(f"  Data area starts at:    sector {params['data_start_sector']}")
 
 
 def cmd_list(args, config):
@@ -347,30 +347,30 @@ def cmd_list(args, config):
     active = [e for e in entries if not e["is_deleted"]]
     deleted = [e for e in entries if e["is_deleted"]]
 
-    logger.debug("سلسلة Clusters لمجلد الجذر: %s", chain)
+    logger.debug("Cluster chain for root directory: %s", chain)
 
-    print("--- الملفات والمجلدات في الجذر ---")
+    print("--- Files and directories in the root ---")
     if active:
-        print("\nموجودة حالياً:")
+        print("\nCurrently existing:")
         for e in active:
-            kind = "مجلد" if e["is_dir"] else "ملف"
-            print(f"  [+] {e['name']}  ({kind}, {e['size']} بايت, cluster={e['first_cluster']})")
+            kind = "Directory" if e["is_dir"] else "File"
+            print(f"  [+] {e['name']}  ({kind}, {e['size']} bytes, cluster={e['first_cluster']})")
     else:
-        print("\nلا توجد ملفات موجودة حالياً في الجذر.")
+        print("\nNo currently existing files in the root.")
 
     if args.deleted or args.all:
         if deleted:
-            print("\nمحذوفة (قابلة للاسترجاع المحتمل):")
+            print("\nDeleted (potentially recoverable):")
             for e in deleted:
-                kind = "مجلد" if e["is_dir"] else "ملف"
-                print(f"  [x] {e['name']}  ({kind}, {e['size']} بايت, cluster={e['first_cluster']})")
+                kind = "Directory" if e["is_dir"] else "File"
+                print(f"  [x] {e['name']}  ({kind}, {e['size']} bytes, cluster={e['first_cluster']})")
         else:
-            print("\nلا توجد ملفات محذوفة في الجذر.")
+            print("\nNo deleted files in the root.")
 
 
 def cmd_hexdump(args, config):
     text, read_len = hex_dump(args.image, offset=args.offset, length=args.length)
-    print(f"تم قراءة {read_len} بايت بدءاً من الإزاحة {args.offset}")
+    print(f"Read {read_len} bytes starting from offset {args.offset}")
     print()
     print(text)
 
@@ -381,71 +381,71 @@ def cmd_carve(args, config):
     results = carve_files(args.image, output_dir, types)
 
     if not results:
-        print("لم يتم العثور على أي ملفات مطابقة للتواقيع المعروفة.")
+        print("No files matching the known signatures were found.")
         return
 
-    print(f"--- تم استخراج {len(results)} ملف/ملفات إلى: {output_dir} ---")
+    print(f"--- Extracted {len(results)} file(s) to: {output_dir} ---")
     for path, start, end in results:
-        print(f"  [+] {path}   (الموقع: {start} - {end})")
+        print(f"  [+] {path}   (location: {start} - {end})")
 
 
 # ============================================================
-# بناء الـ Parser الرئيسي
+# Build the Main Parser
 # ============================================================
 def build_parser():
-    # خيارات عامة (--config و --log-level) نعرّفها في parent مشترك حتى تُقبل
-    # سواء كُتبت قبل اسم الأمر الفرعي أو بعده، مثال:
+    # General options (--config and --log-level) are defined in a shared parent
+    # so they are accepted whether written before or after the subcommand name, for example:
     #   diskimagewalker.py --log-level DEBUG info disk.img
     #   diskimagewalker.py info disk.img --log-level DEBUG
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--config", metavar="PATH", default=None, help="مسار ملف إعدادات JSON اختياري")
+    common.add_argument("--config", metavar="PATH", default=None, help="Optional JSON configuration file path")
     common.add_argument(
         "--log-level",
         default="WARNING",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="مستوى تفاصيل السجلّ (افتراضي: WARNING)",
+        help="Log detail level (default: WARNING)",
     )
 
     parser = argparse.ArgumentParser(
         prog="diskimagewalker",
-        description="DiskImageWalker - أداة تحليل واسترجاع بيانات من صور أقراص FAT32 (Digital Forensics)",
+        description="DiskImageWalker - A tool for analyzing and recovering data from FAT32 disk images (Digital Forensics)",
         parents=[common],
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    p_info = subparsers.add_parser("info", help="عرض معلومات Boot Sector", parents=[common])
-    p_info.add_argument("image", help="مسار صورة القرص")
+    p_info = subparsers.add_parser("info", help="Display Boot Sector information", parents=[common])
+    p_info.add_argument("image", help="Disk image path")
     p_info.add_argument("--partition-start", type=int, default=2048,
-                         help="رقم القطاع لبداية القسم (افتراضي: 2048)")
+                         help="Sector number where the partition starts (default: 2048)")
     p_info.set_defaults(func=cmd_info)
 
-    p_list = subparsers.add_parser("list", help="عرض ملفات المجلد الجذري", parents=[common])
-    p_list.add_argument("image", help="مسار صورة القرص")
+    p_list = subparsers.add_parser("list", help="Display files in the root directory", parents=[common])
+    p_list.add_argument("image", help="Disk image path")
     p_list.add_argument("--partition-start", type=int, default=2048,
-                         help="رقم القطاع لبداية القسم (افتراضي: 2048)")
-    p_list.add_argument("--deleted", action="store_true", help="عرض الملفات المحذوفة أيضاً")
-    p_list.add_argument("--all", action="store_true", help="عرض الملفات الموجودة والمحذوفة معاً")
+                         help="Sector number where the partition starts (default: 2048)")
+    p_list.add_argument("--deleted", action="store_true", help="Also display deleted files")
+    p_list.add_argument("--all", action="store_true", help="Display both existing and deleted files")
     p_list.set_defaults(func=cmd_list)
 
-    p_hex = subparsers.add_parser("hexdump", help="عرض بيانات ثنائية بصيغة Hex + ASCII", parents=[common])
-    p_hex.add_argument("image", help="مسار صورة القرص")
-    p_hex.add_argument("--offset", type=int, default=0, help="موقع البداية بالبايت (افتراضي: 0)")
-    p_hex.add_argument("--length", type=int, default=512, help="عدد البايتات المراد عرضها (افتراضي: 512)")
+    p_hex = subparsers.add_parser("hexdump", help="Display binary data in Hex + ASCII format", parents=[common])
+    p_hex.add_argument("image", help="Disk image path")
+    p_hex.add_argument("--offset", type=int, default=0, help="Starting position in bytes (default: 0)")
+    p_hex.add_argument("--length", type=int, default=512, help="Number of bytes to display (default: 512)")
     p_hex.set_defaults(func=cmd_hexdump)
 
-    p_carve = subparsers.add_parser("carve", help="استخراج ملفات مدفونة بالتواقيع (JPEG/PNG)", parents=[common])
-    p_carve.add_argument("image", help="مسار صورة القرص")
-    p_carve.add_argument("--output", help="مجلد الإخراج (افتراضي من الإعدادات أو carved_output)")
-    p_carve.add_argument("--types", help="أنواع الملفات مفصولة بفواصل، مثال: jpg,png")
+    p_carve = subparsers.add_parser("carve", help="Extract embedded files by signatures (JPEG/PNG)", parents=[common])
+    p_carve.add_argument("image", help="Disk image path")
+    p_carve.add_argument("--output", help="Output directory (default from configuration or carved_output)")
+    p_carve.add_argument("--types", help="File types separated by commas, example: jpg,png")
     p_carve.set_defaults(func=cmd_carve)
 
     return parser
 
 
 # ============================================================
-# نقطة الدخول الرئيسية (كل الأخطاء المتوقعة تُمسك هنا)
+# Main Entry Point (all expected errors are caught here)
 # ============================================================
 def main(argv=None):
     parser = build_parser()
@@ -456,46 +456,46 @@ def main(argv=None):
     try:
         config = load_config(args.config)
     except ConfigError as e:
-        print(f"[خطأ في الإعدادات] {e}", file=sys.stderr)
+        print(f"[Configuration Error] {e}", file=sys.stderr)
         return 1
 
     if not os.path.exists(args.image):
-        print(f"[خطأ] الملف غير موجود: {args.image}", file=sys.stderr)
+        print(f"[Error] File does not exist: {args.image}", file=sys.stderr)
         return 1
 
     try:
         with open(args.image, "rb"):
             pass
     except PermissionError:
-        print(f"[خطأ] لا توجد صلاحية كافية للوصول إلى: {args.image}", file=sys.stderr)
+        print(f"[Error] Insufficient permissions to access: {args.image}", file=sys.stderr)
         return 1
     except OSError as e:
-        print(f"[خطأ] تعذّر فتح الملف: {e}", file=sys.stderr)
+        print(f"[Error] Could not open the file: {e}", file=sys.stderr)
         return 1
 
     try:
         args.func(args, config)
     except InvalidImageError as e:
-        print(f"[خطأ] صورة القرص غير صالحة: {e}", file=sys.stderr)
+        print(f"[Error] Invalid disk image: {e}", file=sys.stderr)
         return 1
     except FileNotFoundError as e:
-        print(f"[خطأ] ملف غير موجود: {e}", file=sys.stderr)
+        print(f"[Error] File not found: {e}", file=sys.stderr)
         return 1
     except PermissionError as e:
-        print(f"[خطأ] صلاحيات غير كافية: {e}", file=sys.stderr)
+        print(f"[Error] Insufficient permissions: {e}", file=sys.stderr)
         return 1
     except struct.error as e:
-        print(f"[خطأ] بيانات ثنائية غير متوقعة أثناء التحليل: {e}", file=sys.stderr)
+        print(f"[Error] Unexpected binary data during analysis: {e}", file=sys.stderr)
         return 1
     except DiskImageWalkerError as e:
-        print(f"[خطأ] {e}", file=sys.stderr)
+        print(f"[Error] {e}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print("\n[تنبيه] تم إيقاف العملية من قبل المستخدم.", file=sys.stderr)
+        print("\n[Warning] Operation was interrupted by the user.", file=sys.stderr)
         return 130
     except Exception as e:
-        logger.debug("تفاصيل الخطأ الكاملة:", exc_info=True)
-        print(f"[خطأ غير متوقع] {e}", file=sys.stderr)
+        logger.debug("Full error details:", exc_info=True)
+        print(f"[Unexpected Error] {e}", file=sys.stderr)
         return 1
 
     return 0
@@ -503,5 +503,3 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.exit(main())
-
-
